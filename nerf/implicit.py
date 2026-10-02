@@ -248,7 +248,6 @@ class MLPWithInputSkips(torch.nn.Module):
         return y
 
 
-# TODO (Q3.1): Implement NeRF MLP
 class NeuralRadianceField(torch.nn.Module):
     def __init__(
         self,
@@ -262,7 +261,36 @@ class NeuralRadianceField(torch.nn.Module):
         embedding_dim_xyz = self.harmonic_embedding_xyz.output_dim
         embedding_dim_dir = self.harmonic_embedding_dir.output_dim
 
-        pass
+        self.mlp_xyz = MLPWithInputSkips(
+            n_layers=cfg.n_layers_xyz,
+            input_dim=embedding_dim_xyz,
+            output_dim=cfg.n_hidden_neurons_xyz,
+            skip_dim=embedding_dim_xyz,
+            hidden_dim=cfg.n_hidden_neurons_xyz,
+            input_skips=cfg.append_xyz,
+        )
+
+        self.density_head = torch.nn.Linear(cfg.n_hidden_neurons_xyz, 1)
+
+        self.color_head = torch.nn.Sequential(
+            torch.nn.Linear(cfg.n_hidden_neurons_xyz, cfg.n_hidden_neurons_dir),
+            torch.nn.ReLU(),
+            torch.nn.Linear(cfg.n_hidden_neurons_dir, 3),
+        )
+
+    def forward(self, ray_bundle):
+        points = ray_bundle.sample_points.view(-1, 3)
+        embedded = self.harmonic_embedding_xyz(points)
+
+        features = torch.relu(self.mlp_xyz(embedded, embedded))
+
+        density = torch.relu(self.density_head(features))
+        color = torch.sigmoid(self.color_head(features))
+
+        return {
+            'density': density,
+            'feature': color,
+        }
 
 
 class NeuralSurface(torch.nn.Module):
@@ -271,45 +299,59 @@ class NeuralSurface(torch.nn.Module):
         cfg,
     ):
         super().__init__()
-        # TODO (Q4.3): Implement Neural Surface MLP to output per-point SDF
-        # TODO (Q4.3): Implement Neural Surface MLP to output per-point color
+
+        self.harmonic_embedding_xyz = HarmonicEmbedding(3, cfg.n_harmonic_functions_xyz)
+
+        embedding_dim_xyz = self.harmonic_embedding_xyz.output_dim
+
+        self.mlp_distance = MLPWithInputSkips(
+            n_layers=cfg.n_layers_distance,
+            input_dim=embedding_dim_xyz,
+            output_dim=cfg.n_hidden_neurons_distance,
+            skip_dim=embedding_dim_xyz,
+            hidden_dim=cfg.n_hidden_neurons_distance,
+            input_skips=cfg.append_distance,
+        )
+        self.distance_head = torch.nn.Linear(cfg.n_hidden_neurons_distance, 1)
+
+        self.mlp_color = MLPWithInputSkips(
+            n_layers=cfg.n_layers_color,
+            input_dim=embedding_dim_xyz,
+            output_dim=cfg.n_hidden_neurons_color,
+            skip_dim=embedding_dim_xyz,
+            hidden_dim=cfg.n_hidden_neurons_color,
+            input_skips=cfg.append_color,
+        )
+        self.color_head = torch.nn.Sequential(
+            torch.nn.Linear(cfg.n_hidden_neurons_color, 3),
+            torch.nn.Sigmoid(),
+        )
 
     def get_distance(
         self,
         points
     ):
-        '''
-        TODO: Q4.3
-        Output:
-            distance: N X 1 Tensor, where N is number of input points
-        '''
         points = points.view(-1, 3)
-        pass
-    
+        embedded = self.harmonic_embedding_xyz(points)
+        features = torch.relu(self.mlp_distance(embedded, embedded))
+        return self.distance_head(features)
+
     def get_color(
         self,
         points
     ):
-        '''
-        TODO: Q4.3
-        Output:
-            distance: N X 3 Tensor, where N is number of input points
-        '''
         points = points.view(-1, 3)
-        pass
-    
+        embedded = self.harmonic_embedding_xyz(points)
+        features = torch.relu(self.mlp_color(embedded, embedded))
+        return self.color_head(features)
+
     def get_distance_color(
         self,
         points
     ):
-        '''
-        TODO: Q4.3
-        Output:
-            distance, points: N X 1, N X 3 Tensors, where N is number of input points
-        You may just implement this by independent calls to get_distance, get_color
-            but, depending on your MLP implementation, it maybe more efficient to share some computation
-        '''
-        
+        points = points.view(-1, 3)
+        return self.get_distance(points), self.get_color(points)
+
     def forward(self, points):
         return self.get_distance(points)
 

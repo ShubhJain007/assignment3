@@ -35,7 +35,7 @@ from dataset import (
     get_nerf_datasets,
     trivial_collate,
 )
-from render_functions import render_geometry
+from render_functions import render_geometry, render_points
 
 
 # Model class containing:
@@ -100,18 +100,23 @@ def render_images(
 
         # TODO (Q1.3): Visualize xy grid using vis_grid
         if cam_idx == 0 and file_prefix == '':
-            pass
+            plt.imsave('images/grid.png', vis_grid(xy_grid, image_size))
 
         # TODO (Q1.3): Visualize rays using vis_rays
         if cam_idx == 0 and file_prefix == '':
-            pass
+            plt.imsave('images/rays.png', vis_rays(ray_bundle, image_size))
         
         # TODO (Q1.4): Implement point sampling along rays in sampler.py
         pass
 
         # TODO (Q1.4): Visualize sample points as point cloud
         if cam_idx == 0 and file_prefix == '':
-            pass
+            sampled = model.sampler(ray_bundle)
+            render_points(
+                'images/sample_points.png',
+                sampled.sample_points.reshape(1, -1, 3)[:, ::50],
+                device=device,
+            )
 
         # TODO (Q1.5): Implement rendering in renderer.py
         out = model(ray_bundle)
@@ -126,7 +131,9 @@ def render_images(
 
         # TODO (Q1.5): Visualize depth
         if cam_idx == 2 and file_prefix == '':
-            pass
+            depth = out['depth'].view(image_size[1], image_size[0])
+            depth = depth / depth.max()
+            plt.imsave('images/depth.png', depth.detach().cpu().numpy())
 
         # Save
         if save:
@@ -202,7 +209,7 @@ def train(
             out = model(ray_bundle)
 
             # TODO (Q2.2): Calculate loss
-            loss = None
+            loss = torch.mean((out['feature'] - rgb_gt) ** 2)
 
             # Backprop
             optimizer.zero_grad()
@@ -322,7 +329,7 @@ def train_nerf(
             out = model(ray_bundle)
 
             # TODO (Q3.1): Calculate loss
-            loss = None
+            loss = torch.mean((out['feature'] - rgb_gt) ** 2)
 
             if cfg.renderer.type == 'volume_sdf':
                 loss += cfg.training.eikonal_weight * get_eikonal_loss(

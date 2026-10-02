@@ -23,9 +23,12 @@ class VolumeRenderer(torch.nn.Module):
         eps: float = 1e-10
     ):
         # TODO (1.5): Compute transmittance using the equation described in the README
-        pass
+        alpha = 1 - torch.exp(-rays_density * deltas)
+        T = torch.cumprod(1 - alpha + eps, dim=1)
+        T = torch.cat([torch.ones_like(T[:, :1]), T[:, :-1]], dim=1)
 
         # TODO (1.5): Compute weight used for rendering from transmittance and alpha
+        weights = T * alpha
         return weights
     
     def _aggregate(
@@ -34,7 +37,7 @@ class VolumeRenderer(torch.nn.Module):
         rays_feature: torch.Tensor
     ):
         # TODO (1.5): Aggregate (weighted sum of) features using weights
-        pass
+        feature = torch.sum(weights * rays_feature, dim=1)
 
         return feature
 
@@ -78,13 +81,14 @@ class VolumeRenderer(torch.nn.Module):
             ) 
 
             # TODO (1.5): Render (color) features using weights
-            pass
+            feature = self._aggregate(weights, feature.view(-1, n_pts, 3))
 
             # TODO (1.5): Render depth map
-            pass
+            depth = self._aggregate(weights, depth_values[...,None])
 
             # Return
             cur_out = {
+              
                 'feature': feature,
                 'depth': depth,
             }
@@ -103,8 +107,12 @@ class VolumeRenderer(torch.nn.Module):
 
 
 def sdf_to_density(signed_distance, alpha, beta):
-    # TODO (Q4.3): Convert signed distance to density with alpha, beta parameters
-    pass
+    # Convert signed distance to density using the VolSDF-style transform.
+    return torch.where(
+        signed_distance > 0,
+        0.5 * torch.exp(-signed_distance / beta),
+        1.0 - 0.5 * torch.exp(signed_distance / beta),
+    ) * alpha
 
 class VolumeSDFRenderer(VolumeRenderer):
     def __init__(
@@ -141,7 +149,7 @@ class VolumeSDFRenderer(VolumeRenderer):
 
             # Call implicit function with sample points
             distance, color = implicit_fn.get_distance_color(cur_ray_bundle.sample_points)
-            density = None # TODO (Q4.3): convert SDF to density
+            density = sdf_to_density(distance, self.alpha, self.beta)
 
             # Compute length of each ray segment
             depth_values = cur_ray_bundle.sample_lengths[..., 0]
